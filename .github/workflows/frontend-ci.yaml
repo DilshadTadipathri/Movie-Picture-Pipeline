@@ -99,9 +99,6 @@ jobs:
         working-directory: starter/frontend
         run: CI=true npm test -- --watchAll=false
 
-      - name: Build Docker image
+            - name: Build Docker image
         working-directory: starter/frontend
-        run: |
-          docker build \
-            --build-arg REACT_APP_MOVIE_API_URL=http://localhost:5000 \
-            --tag mp-frontend:${{ github.sha }} 
+        run: docker build --build-arg REACT_APP_MOVIE_API_URL=http://localhost:5000 --tag mp-frontend:${{ github.sha }} .cd ..\..
