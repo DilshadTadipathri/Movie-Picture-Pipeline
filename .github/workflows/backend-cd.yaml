@@ -1,115 +1,62 @@
-name: Backend Continuous Deployment
+name: Backend CD (GHCR + kind)
 
 on:
   push:
-    branches:
-      - main
-    paths:
-      - 'starter/backend/**'
-
+    branches: [main]
+    paths: ['starter/backend/**']
   workflow_dispatch:
 
-env:
-  AWS_REGION: us-east-1
-  ECR_REPOSITORY: backend
-  EKS_CLUSTER: cluster
+permissions:
+  contents: read
+  packages: write
 
 jobs:
-  lint:
-    name: Lint Backend
-    runs-on: ubuntu-latest
-
-    defaults:
-      run:
-        working-directory: starter/backend
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
-          cache: 'pipenv'
-          cache-dependency-path: starter/backend/Pipfile.lock
-
-      - name: Install pipenv
-        run: pip install pipenv
-
-      - name: Install dependencies
-        run: pipenv install --dev
-
-      - name: Run lint
-        run: pipenv run lint
-
-  test:
-    name: Test Backend
-    runs-on: ubuntu-latest
-
-    defaults:
-      run:
-        working-directory: starter/backend
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
-          cache: 'pipenv'
-          cache-dependency-path: starter/backend/Pipfile.lock
-
-      - name: Install pipenv
-        run: pip install pipenv
-
-      - name: Install dependencies
-        run: pipenv install --dev
-
-      - name: Run tests
-        run: pipenv run test
-
   deploy:
-    name: Build, Push and Deploy Backend
     runs-on: ubuntu-latest
-
-    needs:
-      - lint
-      - test
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+      - name: Set lowercase image name
+        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/backend:${GITHUB_SHA}" >> "$GITHUB_ENV"
+
+      - uses: docker/login-action@v3
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
-          aws-region: ${{ env.AWS_REGION }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Login to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: starter/backend
+          load: true
+          push: false
+          tags: ${{ env.IMAGE }}
 
-      - name: Build and push Docker image
-        working-directory: starter/backend
-        env:
-          IMAGE_URI: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
-        run: |
-          docker build --tag "$IMAGE_URI" .
-          docker push "$IMAGE_URI"
+      - name: Push image to GHCR
+        run: docker push "$IMAGE"
 
-      - name: Update kubeconfig
-        run: aws eks update-kubeconfig --name "$EKS_CLUSTER" --region "$AWS_REGION"
+      - name: Create kind cluster
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: cluster
 
-      - name: Deploy to EKS
+      - name: Load image into kind
+        run: kind load docker-image "$IMAGE" --name cluster
+
+      - name: Deploy with kustomize
         working-directory: starter/backend/k8s
-        env:
-          IMAGE_URI: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
         run: |
-          kustomize edit set image backend="$IMAGE_URI"
+          kustomize edit set image backend=$IMAGE
           kustomize build | kubectl apply -f -
+
+      - name: Verify deployment
+        run: |
+          kubectl wait --for=condition=available deployment --all --timeout=180s
+          kubectl get pods,svc -o wide
+
+      - name: Smoke test /movies
+        run: |
+          kubectl port-forward deployment/backend 5000:5000 &
+          sleep 5
+          curl --fail http://localhost:5000/movies
