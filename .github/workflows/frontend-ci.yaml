@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - 'starter/frontend/**'
+
   workflow_dispatch:
 
 jobs:
@@ -13,63 +14,68 @@ jobs:
     name: Lint Frontend
     runs-on: ubuntu-latest
 
+    defaults:
+      run:
+        working-directory: starter/frontend
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: Setup NodeJS
         uses: actions/setup-node@v4
         with:
-          node-version: '18.14.2'
+          node-version-file: 'starter/frontend/.nvmrc'
 
-      - name: Cache npm
+      - name: Cache npm dependencies
         uses: actions/cache@v4
         with:
-          path: ~/.npm
-          key: frontend-node-${{ runner.os }}-${{ hashFiles('starter/frontend/package-lock.json') }}
+          path: starter/frontend/node_modules
+          key: frontend-node-modules-${{ runner.os }}-${{ hashFiles('starter/frontend/package-lock.json') }}
           restore-keys: |
-            frontend-node-${{ runner.os }}-
+            frontend-node-modules-${{ runner.os }}-
 
       - name: Install dependencies
-        working-directory: starter/frontend
         run: npm ci
 
       - name: Run lint
-        working-directory: starter/frontend
         run: npm run lint
 
   test:
     name: Test Frontend
     runs-on: ubuntu-latest
 
+    defaults:
+      run:
+        working-directory: starter/frontend
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: Setup NodeJS
         uses: actions/setup-node@v4
         with:
-          node-version: '18.14.2'
+          node-version-file: 'starter/frontend/.nvmrc'
 
-      - name: Cache npm
+      - name: Cache npm dependencies
         uses: actions/cache@v4
         with:
-          path: ~/.npm
-          key: frontend-node-${{ runner.os }}-${{ hashFiles('starter/frontend/package-lock.json') }}
+          path: starter/frontend/node_modules
+          key: frontend-node-modules-${{ runner.os }}-${{ hashFiles('starter/frontend/package-lock.json') }}
           restore-keys: |
-            frontend-node-${{ runner.os }}-
+            frontend-node-modules-${{ runner.os }}-
 
       - name: Install dependencies
-        working-directory: starter/frontend
         run: npm ci
 
       - name: Run tests
-        working-directory: starter/frontend
-        run: CI=true npm test -- --watchAll=false
+        run: CI=true npm test
 
   build:
-    name: Build Frontend Docker Image
+    name: Build Frontend
     runs-on: ubuntu-latest
+
     needs:
       - lint
       - test
@@ -78,18 +84,18 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: Setup NodeJS
         uses: actions/setup-node@v4
         with:
-          node-version: '18.14.2'
+          node-version-file: 'starter/frontend/.nvmrc'
 
-      - name: Cache npm
+      - name: Cache npm dependencies
         uses: actions/cache@v4
         with:
-          path: ~/.npm
-          key: frontend-node-${{ runner.os }}-${{ hashFiles('starter/frontend/package-lock.json') }}
+          path: starter/frontend/node_modules
+          key: frontend-node-modules-${{ runner.os }}-${{ hashFiles('starter/frontend/package-lock.json') }}
           restore-keys: |
-            frontend-node-${{ runner.os }}-
+            frontend-node-modules-${{ runner.os }}-
 
       - name: Install dependencies
         working-directory: starter/frontend
@@ -97,9 +103,13 @@ jobs:
 
       - name: Run tests
         working-directory: starter/frontend
-        run: CI=true npm test -- --watchAll=false
+        run: CI=true npm test
 
       - name: Build Docker image
         working-directory: starter/frontend
+        env:
+          REACT_APP_MOVIE_API_URL: http://localhost:5000
         run: |
-          docker build --build-arg "REACT_APP_MOVIE_API_URL=http://localhost:5000" --tag "mp-frontend:${{ github.sha }}" .
+          docker build \
+            --build-arg REACT_APP_MOVIE_API_URL="$REACT_APP_MOVIE_API_URL" \
+            --tag mp-frontend:latest .
